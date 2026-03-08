@@ -1,0 +1,20 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark background -->
+  <rect width="120" height="120" rx="28" fill="#0A0A0A"/>
+  
+  <!-- Simple O letter with routing arrow -->
+  <circle 
+    cx="60" 
+    cy="60" 
+    r="28" 
+    stroke="#7C7CFF" 
+    stroke-width="8" 
+    fill="none"
+  />
+  
+  <!-- Arrow pointing right -->
+  <path 
+    d="M52 60 L62 50 L62 56 L74 56 L74 64 L62 64 L62 70 Z" 
+    fill="white"
+  />
+</svg>

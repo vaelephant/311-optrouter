@@ -1,0 +1,327 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* =========================
+   Dr.Seek Design Tokens v1.1
+   Light + Dark Theme
+   ========================= */
+
+:root {
+  /* ---------- 视觉主色（只改这两处即可全站生效） ---------- */
+  --color-brand: #003153;
+  --color-brand-hover: #004080;
+
+  /* ---------- Design Tokens: Colors ---------- */
+  --color-bg-page: #f6f6f7;
+  --color-bg-surface: #ffffff;
+  --color-bg-muted: #f3f3f4;
+  --color-text-primary: #0a0a0a;
+  --color-text-secondary: #333333;
+  --color-text-body: #666666;
+  --color-text-muted: #9a9a9a;
+  --color-border-default: #e6e6e6;
+  --color-border-subtle: #efefef;
+  --color-accent-primary: var(--color-brand);
+  --color-accent-hover: var(--color-brand-hover);
+  --color-accent-soft: color-mix(in srgb, var(--color-brand) 12%, #fff);
+  --color-button-primary-bg: var(--color-brand);
+  --color-button-primary-hover: var(--color-brand-hover);
+  --color-button-primary-text: #ffffff;
+  --color-button-secondary-bg: transparent;
+  --color-button-secondary-text: #0a0a0a;
+  --color-button-secondary-border: #111111;
+  --color-focus-ring: color-mix(in srgb, var(--color-brand) 35%, transparent);
+  
+  /* ---------- Design Tokens: Typography ---------- */
+  --font-family-sans: Inter, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --font-family-cn: "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  
+  /* ---------- Design Tokens: Spacing (8px scale) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 80px;
+  
+  /* ---------- Design Tokens: Radius ---------- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-pill: 9999px;
+  
+  /* ---------- Design Tokens: Shadows ---------- */
+  --shadow-soft: 0 2px 8px rgba(0,0,0,0.05);
+  --shadow-card-hover: 0 6px 18px rgba(0,0,0,0.08);
+  
+  /* ---------- Design Tokens: Motion ---------- */
+  --motion-fast: 0.15s;
+  --motion-base: 0.25s;
+  --motion-slow: 0.4s;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* ---------- Design Tokens: Layout ---------- */
+  --layout-max-width: 1200px;
+  --layout-padding-x: 24px;
+  --layout-section-spacing: 80px;
+  --layout-section-spacing-mobile: 48px;
+
+  /* 白黑灰配色方案 (保持兼容性) */
+  /* primary 使用品牌色，Tailwind 的 bg-primary / 主按钮会自然跟随 */
+  --primary: var(--color-brand);
+  --primary-foreground: oklch(1 0 0);      /* 白色文字 */
+  --background: oklch(1 0 0);              /* 白色背景 */
+  --foreground: oklch(0.1 0 0);           /* 黑色文字 */
+  --card: oklch(0.98 0 0);                 /* 浅灰卡片 */
+  --card-foreground: oklch(0.1 0 0);      /* 黑色文字 */
+  --popover: oklch(0.98 0 0);              /* 浅灰弹出层 */
+  --popover-foreground: oklch(0.1 0 0);    /* 黑色文字 */
+  --secondary: oklch(0.95 0 0);            /* 浅灰次要 */
+  --secondary-foreground: oklch(0.2 0 0);  /* 深灰文字 */
+  --muted: oklch(0.96 0 0);                /* 浅灰静音 */
+  --muted-foreground: oklch(0.5 0 0);      /* 中灰文字 */
+  --accent: oklch(0.2 0 0);                 /* 深灰强调 */
+  --accent-foreground: oklch(1 0 0);       /* 白色文字 */
+  --destructive: oklch(0.3 0 0);            /* 深灰危险 */
+  --destructive-foreground: oklch(1 0 0);  /* 白色文字 */
+  --border: oklch(0.9 0 0);                 /* 浅灰边框 */
+  --input: oklch(0.95 0 0);                /* 浅灰输入框 */
+  --ring: oklch(0.3 0 0);                   /* 深灰焦点环 */
+  --chart-1: oklch(0.2 0 0);                /* 深灰图表1 */
+  --chart-2: oklch(0.4 0 0);                /* 中灰图表2 */
+  --chart-3: oklch(0.5 0 0);                /* 中灰图表3 */
+  --chart-4: oklch(0.6 0 0);                /* 中灰图表4 */
+  --chart-5: oklch(0.7 0 0);                /* 浅灰图表5 */
+  --radius: 0.5rem;
+  --sidebar: oklch(0.97 0 0);               /* 浅灰侧边栏 */
+  --sidebar-foreground: oklch(0.15 0 0);   /* 深灰文字 */
+  --sidebar-primary: oklch(0.1 0 0);        /* 黑色主色 */
+  --sidebar-primary-foreground: oklch(1 0 0); /* 白色文字 */
+  --sidebar-accent: oklch(0.94 0 0);        /* 浅灰强调 */
+  --sidebar-accent-foreground: oklch(0.2 0 0); /* 深灰文字 */
+  --sidebar-border: oklch(0.9 0 0);         /* 浅灰边框 */
+  --sidebar-ring: oklch(0.3 0 0);           /* 深灰焦点环 */
+  --success: oklch(0.4 0 0);                /* 中灰成功 */
+  --success-foreground: oklch(1 0 0);       /* 白色文字 */
+  --warning: oklch(0.6 0 0);                /* 中灰警告 */
+  --warning-foreground: oklch(0.1 0 0);     /* 黑色文字 */
+}
+
+@theme inline {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+}
+
+/* Dark theme via class strategy */
+:root.dark {
+  --color-bg-page: #070a10;
+  --color-bg-surface: #0b1020;
+  --color-bg-muted: #0f172a;
+  --color-text-primary: rgba(255,255,255,0.92);
+  --color-text-secondary: rgba(255,255,255,0.78);
+  --color-text-body: rgba(255,255,255,0.65);
+  --color-text-muted: rgba(255,255,255,0.45);
+  --color-border-default: rgba(255,255,255,0.12);
+  --color-border-subtle: rgba(255,255,255,0.08);
+  --color-accent-primary: var(--color-brand);
+  --color-accent-hover: var(--color-brand-hover);
+  --color-accent-soft: color-mix(in srgb, var(--color-brand) 18%, transparent);
+  --color-button-primary-bg: var(--color-brand);
+  --color-button-primary-hover: var(--color-brand-hover);
+  --color-button-primary-text: #ffffff;
+  --color-button-secondary-bg: transparent;
+  --color-button-secondary-text: rgba(255,255,255,0.92);
+  --color-button-secondary-border: rgba(255,255,255,0.22);
+  --color-focus-ring: color-mix(in srgb, var(--color-brand) 50%, transparent);
+  --shadow-soft: 0 2px 12px rgba(0,0,0,0.45);
+  --shadow-card-hover: 0 10px 28px rgba(0,0,0,0.50);
+
+  /* OKLCH colors for dark mode (shadcn/ui) */
+  /* primary 使用品牌色，与亮色一致 */
+  --primary: var(--color-brand);
+  --primary-foreground: oklch(1 0 0);      /* 白色文字 */
+  --background: oklch(0.03 0 0);              /* near-black */
+  --foreground: oklch(0.95 0 0);            /* white text */
+  --card: oklch(0.05 0 0);                   /* dark card */
+  --card-foreground: oklch(0.95 0 0);        /* white text */
+  --popover: oklch(0.05 0 0);                /* dark popover */
+  --popover-foreground: oklch(0.95 0 0);    /* white text */
+  --secondary: oklch(0.15 0 0);             /* dark secondary */
+  --secondary-foreground: oklch(0.95 0 0); /* white text */
+  --muted: oklch(0.15 0 0);                  /* dark muted */
+  --muted-foreground: oklch(0.6 0 0);       /* light gray */
+  --accent: oklch(0.25 0 0);                 /* dark accent */
+  --accent-foreground: oklch(0.95 0 0);     /* white text */
+  --destructive: oklch(0.4 0 0);            /* dark destructive */
+  --destructive-foreground: oklch(0.95 0 0); /* white text */
+  --border: oklch(0.2 0 0);                  /* dark border */
+  --input: oklch(0.15 0 0);                   /* dark input */
+  --ring: oklch(0.5 0 0);                     /* accent ring */
+  --chart-1: oklch(0.5 0 0);                  /* dark chart1 */
+  --chart-2: oklch(0.6 0 0);                  /* dark chart2 */
+  --chart-3: oklch(0.65 0 0);                  /* dark chart3 */
+  --chart-4: oklch(0.7 0 0);                  /* dark chart4 */
+  --chart-5: oklch(0.75 0 0);                 /* dark chart5 */
+  --sidebar: oklch(0.05 0 0);                /* dark sidebar */
+  --sidebar-foreground: oklch(0.95 0 0);    /* white text */
+  --sidebar-primary: oklch(0.6 0 0);         /* accent sidebar */
+  --sidebar-primary-foreground: oklch(0.1 0 0); /* black text */
+  --sidebar-accent: oklch(0.1 0 0);          /* dark accent */
+  --sidebar-accent-foreground: oklch(0.95 0 0); /* white text */
+  --sidebar-border: oklch(0.15 0 0);         /* dark border */
+  --sidebar-ring: oklch(0.5 0 0);             /* accent ring */
+  --success: oklch(0.55 0 0);                 /* dark success */
+  --success-foreground: oklch(0.1 0 0);     /* black text */
+  --warning: oklch(0.7 0 0);                  /* dark warning */
+  --warning-foreground: oklch(0.1 0 0);      /* black text */
+}
+
+/* Base body usage */
+html, body {
+  font-family: var(--font-family-sans), var(--font-family-cn);
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Utility classes using tokens */
+.ds-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  transition: transform var(--motion-base) var(--ease-standard),
+              border-color var(--motion-base) var(--ease-standard),
+              box-shadow var(--motion-base) var(--ease-standard);
+}
+.ds-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-1px);
+  border-color: #d0d0d0;
+}
+
+:root.dark .ds-card:hover {
+  border-color: rgba(255,255,255,0.22);
+}
+
+/* 主按钮：只补形状/动效，颜色由 Tailwind bg-primary 提供（--primary = --color-brand） */
+.ds-btn-primary,
+button.ds-btn-primary,
+[data-slot="button"].ds-btn-primary {
+  border-radius: var(--radius-pill);
+  padding: 14px 28px;
+  font-weight: 600;
+  transition: background var(--motion-base) var(--ease-standard),
+              transform var(--motion-base) var(--ease-standard);
+  border: none;
+  cursor: pointer;
+}
+.ds-btn-primary:hover,
+button.ds-btn-primary:hover,
+[data-slot="button"].ds-btn-primary:hover {
+  background: var(--color-brand-hover) !important; /* 覆盖 Tailwind 的 hover:bg-primary/90 */
+}
+.ds-btn-primary:active {
+  transform: scale(0.99);
+}
+.ds-btn-primary:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--color-focus-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Responsive spacing adjustments */
+@media (max-width: 768px) {
+  :root {
+    --layout-section-spacing: var(--layout-section-spacing-mobile);
+    --layout-padding-x: 16px;
+  }
+}
+
+/* Hero section */
+.hero {
+  padding-top: var(--layout-section-spacing);
+  padding-bottom: var(--layout-section-spacing);
+}
+.hero-glow {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, var(--color-accent-soft), transparent);
+}
+.hero-title {
+  font-size: clamp(36px, 7vw, 56px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-5);
+  max-width: 800px;
+}
+.hero-subtitle {
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--color-text-body);
+  max-width: 560px;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-7);
+}
+.hero-trust-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}

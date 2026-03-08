@@ -1,0 +1,22 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OptRouter Gateway — 生产环境覆盖（APP_ENV=prod）
+# 只需写与 base.toml 不同的值
+# ─────────────────────────────────────────────────────────────────────────────
+
+[postgres]
+# 生产连接池需要更多连接承载并发
+max_connections = 50
+min_connections = 5
+# 生产 DB 可能是远程，超时给足 30s（与 base 一致，此处明确写出）
+acquire_timeout_secs = 30
+# 连接失败多重试几次
+connect_retry_attempts = 5
+connect_retry_wait_secs = 5
+
+[providers]
+# 生产连接池更大
+pool_max_idle = 50
+
+[cache]
+# 生产 Key 缓存时间更长，减少 DB 查询
+key_ttl_secs = 3600
