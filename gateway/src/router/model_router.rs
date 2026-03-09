@@ -45,8 +45,8 @@ pub struct RouteInfo {
     pub provider:              ProviderType,
     pub tier:                  ModelTier,
     pub capability:            ModelCapability,
-    pub input_price_per_1m:    f64,
-    pub output_price_per_1m:   f64,
+    pub input_price_per_1k:    f64,
+    pub output_price_per_1k:   f64,
     pub fallback_model:        Option<String>,
     pub fallback_provider_url: Option<String>,
     pub fallback_provider:     Option<ProviderType>,
@@ -90,8 +90,13 @@ impl ModelRouter {
         }
     }
 
+    /// 全量更新路由表
+    pub async fn update_routes(&self, new_routes: HashMap<String, RouteInfo>) {
+        let mut routes = self.routes.write().await;
+        *routes = new_routes;
+    }
+
     /// 智能路由主入口
-    /// `force_routing`: 是否忽略置信度阈值强制进行 Tier 匹配（用于虚拟模型名）
     pub async fn intelligent_route(
         &self, 
         profile: &RequestProfile, 
@@ -101,7 +106,6 @@ impl ModelRouter {
     ) -> IntelligentRouteResult {
         // 1. 尝试 Layer 1 粗路由
         if let Some(decision) = self.coarse_router.route(profile) {
-             // 如果是强制路由或者置信度极高，则采用路由建议
              if force_routing || decision.confidence > 0.9 {
                  if let Some(route) = self.find_best_model_for_tier(decision.tier).await {
                      return IntelligentRouteResult::Routed(route, decision);
@@ -133,8 +137,8 @@ impl ModelRouter {
             provider: ProviderType::Unknown,
             tier: ModelTier::Balanced,
             capability: Default::default(),
-            input_price_per_1m: 0.0,
-            output_price_per_1m: 0.0,
+            input_price_per_1k: 0.0,
+            output_price_per_1k: 0.0,
             fallback_model: None,
             fallback_provider_url: None,
             fallback_provider: None,
@@ -150,8 +154,8 @@ impl ModelRouter {
             provider:             ProviderType::Unknown,
             tier:                 ModelTier::Balanced,
             capability:           ModelCapability::default(),
-            input_price_per_1m:   0.0,
-            output_price_per_1m:  0.0,
+            input_price_per_1k:   0.0,
+            output_price_per_1k:  0.0,
             fallback_model:       None,
             fallback_provider_url: None,
             fallback_provider:    None,
@@ -193,7 +197,7 @@ impl ModelRouter {
         routes.values()
             .filter(|r| r.tier == tier)
             .min_by(|a, b| {
-                a.input_price_per_1m.partial_cmp(&b.input_price_per_1m).unwrap_or(std::cmp::Ordering::Equal)
+                a.input_price_per_1k.partial_cmp(&b.input_price_per_1k).unwrap_or(std::cmp::Ordering::Equal)
             })
             .cloned()
     }

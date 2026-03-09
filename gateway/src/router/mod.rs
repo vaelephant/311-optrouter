@@ -18,7 +18,7 @@ pub mod strategy;
 pub mod types;
 
 pub use model_router::{ModelRouter, ProviderType, RouteInfo, IntelligentRouteResult};
-pub use registry::load_registry;
+pub use registry::load_registry_from_db;
 pub use strategy::{CoarseRouter, ContextualRouter, HeuristicScorer};
 pub use types::*;
 
@@ -38,26 +38,21 @@ type Limiter = governor::DefaultDirectRateLimiter;
 #[derive(Clone)]
 pub struct RouterState {
     /// Postgres 连接池
-    /// - Key 验证（缓存未命中时回源）
-    /// - 原子扣费事务
-    /// - 模型定价查询
     pub db: sqlx::PgPool,
 
-    /// Redis 连接管理器（自动重连）
-    /// - Key 元数据缓存（TTL 30min）
-    /// - 吊销时立即删除（Next.js 调用）
+    /// Redis 连接管理器
     pub redis: redis::aio::ConnectionManager,
 
-    /// reqwest 共享连接池（转发请求到 AI Provider）
+    /// reqwest 共享连接池
     pub http_client: reqwest::Client,
 
     /// 模型 → Provider 路由表
     pub model_router: ModelRouter,
 
-    /// 全局配置（Provider API Key、缓存 TTL 等）
+    /// 全局配置
     pub config: Arc<AppConfig>,
 
-    /// 按 api_key_id 的限流器（每分钟请求数来自 api_keys.rate_limit_per_min）
+    /// 按 api_key_id 的限流器
     pub limiters: Arc<DashMap<Uuid, Limiter>>,
 }
 
@@ -73,41 +68,13 @@ impl RouterState {
     ) -> Self {
         let config = Arc::new(AppConfig::from_env_with_toml(toml));
 
-        // 读取代理配置（来自 .env）
-        let proxy_enabled = std::env::var("PROXY_ENABLED")
-            .map(|v| v.to_lowercase() == "true")
-            .unwrap_or(false);
-        let proxy_url = std::env::var("PROXY_URL").ok();
-
-        let mut builder = reqwest::Client::builder()
+        let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(config.providers.timeout_secs))
-            .pool_max_idle_per_host(config.providers.pool_max_idle);
-
-        if proxy_enabled {
-            if let Some(url) = &proxy_url {
-                match reqwest::Proxy::all(url) {
-                    Ok(proxy) => {
-                        builder = builder.proxy(proxy);
-                        tracing::info!("HTTP client proxy enabled: {}", url);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Invalid PROXY_URL '{}', proxy disabled: {}", url, e);
-                    }
-                }
-            } else {
-                tracing::warn!("PROXY_ENABLED=true but PROXY_URL is not set, proxy disabled");
-            }
-        }
-
-        let http_client = builder
             .build()
             .expect("failed to build reqwest client");
 
-        let (routes, _registry_path) = load_registry().unwrap_or_else(|e| {
-            tracing::error!("Registry config failed: {e}. Set REGISTRY_CONFIG or add config/models.toml");
-            std::process::exit(1);
-        });
-        let model_router = ModelRouter::new(routes, config.providers.openai_base_url.clone());
+        // 初始化空的路由表
+        let model_router = ModelRouter::new(std::collections::HashMap::new(), config.providers.openai_base_url.clone());
 
         Self {
             db,
@@ -119,7 +86,14 @@ impl RouterState {
         }
     }
 
-    /// 获取或创建该 API Key 的限流器，并检查是否允许通过。返回 Ok(()) 表示通过，Err 表示超限应返回 429。
+    /// 从数据库初始化路由表
+    pub async fn init_model_router(&self) -> Result<(), String> {
+        let routes = load_registry_from_db(&self.db).await?;
+        self.model_router.update_routes(routes).await;
+        Ok(())
+    }
+
+    /// 获取或创建该 API Key 的限流器
     pub fn check_rate_limit(&self, api_key_id: Uuid, rate_limit_per_min: i32) -> Result<(), ()> {
         let n = rate_limit_per_min.max(1) as u32;
         let quota = Quota::per_minute(NonZeroU32::new(n).unwrap_or(NonZeroU32::MIN));

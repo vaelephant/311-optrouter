@@ -58,15 +58,36 @@ const API_CHECK_RETRIES: u32 = 5;
 const API_CHECK_INTERVAL_SECS: u64 = 1;
 const API_CHECK_TIMEOUT_SECS: u64 = 2;
 
+/// 构建带代理配置的 HTTP client（读取 PROXY_ENABLED / PROXY_URL 环境变量）
+fn build_probe_client(timeout_secs: u64) -> reqwest::Client {
+    let proxy_enabled = std::env::var("PROXY_ENABLED")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false);
+    let proxy_url = std::env::var("PROXY_URL").ok();
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs));
+
+    if proxy_enabled {
+        if let Some(url) = &proxy_url {
+            match reqwest::Proxy::all(url) {
+                Ok(proxy) => { builder = builder.proxy(proxy); }
+                Err(e) => {
+                    tracing::warn!("healthcheck: Invalid PROXY_URL '{}': {}", url, e);
+                }
+            }
+        }
+    }
+
+    builder.build().unwrap_or_else(|e| {
+        tracing::error!("Failed to build HTTP client for probe: {e}");
+        std::process::exit(1);
+    })
+}
+
 /// 检查各上游 Provider 的联通 + Key 认证状态。
 pub async fn check_upstreams(config: Arc<AppConfig>) -> Vec<UpstreamResult> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(CHECK_TIMEOUT_SECS))
-        .build()
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to build HTTP client for startup check: {e}");
-            std::process::exit(1);
-        });
+    let client = build_probe_client(CHECK_TIMEOUT_SECS);
 
     let p = &config.providers;
 
@@ -122,13 +143,7 @@ pub async fn check_upstreams(config: Arc<AppConfig>) -> Vec<UpstreamResult> {
 /// provider 字段为小写（openai / anthropic / google / together / ollama），便于与 model_router 结果对应。
 pub async fn probe_all_providers_for_api(config: std::sync::Arc<AppConfig>) -> Vec<ProviderProbeResult> {
     const TIMEOUT_SECS: u64 = 6;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(TIMEOUT_SECS))
-        .build()
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to build HTTP client for provider probe: {e}");
-            std::process::exit(1);
-        });
+    let client = build_probe_client(TIMEOUT_SECS);
     let p = &config.providers;
     let checks: Vec<(&str, CheckAuth)> = vec![
         (
