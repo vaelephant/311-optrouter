@@ -59,6 +59,7 @@ pub fn build_app(state: router::RouterState) -> Router {
         .route("/v1/models/{model}/pricing", get(api::models::get_model_pricing))
         .route("/v1/chat/completions",       post(api::chat::chat_completions))
         .route("/v1/usage",                  get(api::usage::get_usage_stats))
+        .route("/v1/admin/config/reload",    post(api::admin::reload_config))
         .route("/debug/echo",                post(api::chat::debug_echo).get(api::chat::debug_echo))
         .with_state(state)
         .layer(cors)

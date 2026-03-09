@@ -7,3 +7,4 @@ pub mod health;
 pub mod health_models;
 pub mod models;
 pub mod usage;
+pub mod admin;

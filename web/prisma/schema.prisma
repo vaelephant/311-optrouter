@@ -1,23 +1,344 @@
-// ============================================================
-// Prisma Client 生成配置
-// ============================================================
 generator client {
   provider = "prisma-client-js"
 }
 
-// ============================================================
-// 数据源配置（PostgreSQL）
-// 注意：Prisma 7+ 中，url 配置已迁移至 prisma.config.ts
-// schema.prisma 中只保留 provider 定义
-// ============================================================
 datasource db {
   provider = "postgresql"
-  // url 配置已移至 prisma.config.ts
 }
 
-// ============================================================
-// 枚举定义（提高数据一致性 & 可维护性）
-// ============================================================
+model User {
+  /// 用户唯一ID（UUID）
+  id                       String               @id @default(uuid()) @db.Uuid
+  /// 登录邮箱
+  email                    String               @unique
+  /// 密码哈希（bcrypt/argon2）
+  password                 String?
+  /// 用户角色：admin / user / enterprise
+  role                     String               @default("user")
+  /// 创建时间
+  createdAt                DateTime             @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt                DateTime             @updatedAt @map("updated_at")
+  apiKeys                  ApiKey[]
+  inviteCodes              InviteCode[]
+  inviteRelationsAsInvitee InviteRelation[]     @relation("invite_relation_invitee_idTousers")
+  inviteRelationsAsInviter InviteRelation[]     @relation("invite_relation_inviter_idTousers")
+  inviteRewardRecords      InviteRewardRecord[]
+  rechargeOrders           RechargeOrder[]
+  subscriptions            Subscription[]
+  transactions             Transaction[]
+  usageLogs                UsageLog[]
+  balance                  UserBalance?
+  behaviorLogs             UserBehaviorLog[]
+  loginLogs                UserLoginLog[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id              String       @id @default(uuid()) @db.Uuid
+  /// 所属用户
+  userId          String       @map("user_id") @db.Uuid
+  /// 密钥哈希（安全设计，不存明文）
+  keyHash         String       @map("key_hash")
+  /// 密钥名称（方便管理）
+  name            String?
+  /// 状态
+  status          ApiKeyStatus @default(active)
+  /// 每分钟请求限制（防滥用）
+  rateLimitPerMin Int          @default(60) @map("rate_limit_per_min")
+  /// 创建时间
+  createdAt       DateTime     @default(now()) @map("created_at")
+  /// 最后使用时间
+  lastUsedAt      DateTime?    @map("last_used_at")
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageLogs       UsageLog[]
+
+  @@index([userId], map: "idx_api_keys_user")
+  @@map("api_keys")
+}
+
+model Provider {
+  id            Int            @id @default(autoincrement())
+  /// 供应商代码（openai / anthropic / google / together / ollama）
+  code          String         @unique @db.VarChar(32)
+  /// 显示名称
+  name          String?        @db.VarChar(128)
+  /// 默认 base URL（模型可覆盖）
+  baseUrl       String         @map("base_url")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at")
+  modelPricings ModelPricing[]
+
+  @@index([code], map: "idx_providers_code")
+  @@map("providers")
+}
+
+model ModelPricing {
+  /// 模型名称（如 gpt-4o）
+  modelName             String     @id @map("model_name")
+  /// 输入 token 单价（每 1K tokens）
+  inputPrice            Decimal    @map("input_price") @db.Decimal(10, 6)
+  /// 输出 token 单价（每 1K tokens）
+  outputPrice           Decimal    @map("output_price") @db.Decimal(10, 6)
+  /// 提供商（openai / anthropic / local），保留兼容
+  provider              String     @default("openai")
+  /// 是否启用
+  enabled               Boolean    @default(true)
+  createdAt             DateTime   @default(now()) @map("created_at")
+  /// 所属供应商（可选，未关联时仍用 provider 字段）
+  providerId            Int?       @map("provider_id")
+  /// 输入 token 成本价（每 1K tokens）
+  inputCost             Decimal?   @map("input_cost") @db.Decimal(10, 6)
+  /// 输出 token 成本价（每 1K tokens）
+  outputCost            Decimal?   @map("output_cost") @db.Decimal(10, 6)
+  /// 模型 base URL 覆盖（不填则用供应商默认）
+  baseUrl               String?    @map("base_url")
+  /// 模型最大 token 数
+  maxTokens             Int?       @map("max_tokens")
+  /// 模型简介
+  description           String?
+  updatedAt             DateTime   @default(now()) @updatedAt @map("updated_at")
+  /// 自增 id（便于引用，主键仍为 model_name）
+  id                    Int        @unique @default(autoincrement())
+  provider_url          String?
+  tier                  String?
+  is_virtual            Boolean?   @default(false)
+  capability            Json?
+  fallback_model        String?
+  fallback_provider     String?
+  fallback_provider_url String?
+  providerRef           Provider?  @relation(fields: [providerId], references: [id], onUpdate: NoAction)
+  usageLogs             UsageLog[]
+
+  @@index([providerId], map: "idx_model_pricing_provider_id")
+  @@map("model_pricing")
+}
+
+model UsageLog {
+  id             BigInt       @id @default(autoincrement())
+  userId         String       @map("user_id") @db.Uuid
+  apiKeyId       String?      @map("api_key_id") @db.Uuid
+  /// 使用的模型
+  model          String
+  /// 输入 token 数
+  inputTokens    Int          @map("input_tokens")
+  /// 输出 token 数
+  outputTokens   Int          @map("output_tokens")
+  /// 总 token 数
+  totalTokens    Int          @map("total_tokens")
+  /// 本次调用费用（Decimal 防止财务误差）
+  cost           Decimal      @db.Decimal(10, 6)
+  /// 延迟（毫秒）
+  latencyMs      Int?         @map("latency_ms")
+  /// 状态（成功/失败/限流）
+  status         UsageStatus
+  createdAt      DateTime     @default(now()) @map("created_at")
+  /// 用户请求的模型（与 model 不同时表示发生了 fallback）
+  requestedModel String?      @map("requested_model")
+  /// 实际调用的提供商（openai / anthropic / google）
+  provider       String?
+  /// 请求追踪 ID（便于对账与排查）
+  requestId      String?      @map("request_id")
+  saved_cost     Decimal?     @default(0) @db.Decimal(10, 6)
+  apiKey         ApiKey?      @relation(fields: [apiKeyId], references: [id])
+  pricing        ModelPricing @relation(fields: [model], references: [modelName])
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], map: "idx_usage_user_time")
+  @@index([model], map: "idx_usage_model")
+  @@map("usage_logs")
+}
+
+model UserBalance {
+  userId    String   @id @map("user_id") @db.Uuid
+  /// 当前余额
+  balance   Decimal  @default(0) @db.Decimal(12, 4)
+  updatedAt DateTime @default(now()) @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_balances")
+}
+
+model Transaction {
+  id          BigInt          @id @default(autoincrement())
+  userId      String          @map("user_id") @db.Uuid
+  /// 金额（正=充值，负=扣费）
+  amount      Decimal         @db.Decimal(12, 4)
+  /// 类型：充值/使用/退款/调整
+  type        TransactionType
+  description String?
+  createdAt   DateTime        @default(now()) @map("created_at")
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], map: "idx_tx_user_time")
+  @@map("transactions")
+}
+
+model Plan {
+  id            Int            @id @default(autoincrement())
+  /// 套餐名称
+  name          String
+  /// 月费
+  monthlyPrice  Decimal        @map("monthly_price") @db.Decimal(10, 2)
+  /// token额度
+  tokenQuota    BigInt         @map("token_quota")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id               String             @id @default(uuid()) @db.Uuid
+  userId           String             @map("user_id") @db.Uuid
+  planId           Int                @map("plan_id")
+  /// 当前周期结束时间
+  currentPeriodEnd DateTime           @map("current_period_end")
+  status           SubscriptionStatus
+  createdAt        DateTime           @default(now()) @map("created_at")
+  plan             Plan               @relation(fields: [planId], references: [id])
+  user             User               @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("subscriptions")
+}
+
+model UserLoginLog {
+  id        BigInt   @id @default(autoincrement())
+  userId    String   @map("user_id") @db.Uuid
+  email     String   @db.VarChar(255)
+  loginAt   DateTime @default(now()) @map("login_at") @db.Timestamp(6)
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_login_logs_user")
+
+  @@index([email], map: "idx_user_login_logs_email")
+  @@index([loginAt], map: "idx_user_login_logs_login_at")
+  @@index([userId], map: "idx_user_login_logs_user_id")
+  @@map("user_login_logs")
+}
+
+model UserBehaviorLog {
+  id              BigInt    @id @default(autoincrement())
+  userId          String    @map("user_id") @db.Uuid
+  email           String    @db.VarChar(255)
+  functionName    String    @map("function_name")
+  startTime       DateTime  @map("start_time") @db.Timestamp(6)
+  endTime         DateTime? @map("end_time") @db.Timestamp(6)
+  durationSeconds Float?    @map("duration_seconds")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_behavior_logs_user")
+
+  @@index([email], map: "idx_user_behavior_logs_email")
+  @@index([functionName], map: "idx_user_behavior_logs_function_name")
+  @@index([startTime], map: "idx_user_behavior_logs_start_time")
+  @@index([userId], map: "idx_user_behavior_logs_user_id")
+  @@map("user_behavior_logs")
+}
+
+model InviteCode {
+  id        Int     @id @default(autoincrement())
+  code      String  @unique @db.VarChar(32)
+  userId    String  @map("user_id") @db.Uuid
+  maxUses   Int?    @default(1) @map("max_uses")
+  usedCount Int?    @default(0) @map("used_count")
+  expiresAt String? @map("expires_at")
+  createdAt String? @map("created_at")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_invite_code_user")
+
+  @@index([code], map: "idx_invite_code_code")
+  @@index([userId], map: "idx_invite_code_user_id")
+  @@map("invite_code")
+}
+
+model InviteRelation {
+  id                      Int       @id @default(autoincrement())
+  inviterId               String    @map("inviter_id") @db.Uuid
+  inviteeId               String    @map("invitee_id") @db.Uuid
+  inviteCode              String    @map("invite_code") @db.VarChar(32)
+  usedAt                  String?   @map("used_at")
+  /// 被邀请人首充奖励已发放时间（仅发放一次，直接加邀请人余额）
+  rechargeRewardGrantedAt DateTime? @map("recharge_reward_granted_at") @db.Timestamp(6)
+  invitee                 User      @relation("invite_relation_invitee_idTousers", fields: [inviteeId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_invite_relation_invitee")
+  inviter                 User      @relation("invite_relation_inviter_idTousers", fields: [inviterId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_invite_relation_inviter")
+
+  @@index([inviteCode], map: "idx_invite_relation_code")
+  @@index([inviteeId], map: "idx_invite_relation_invitee_id")
+  @@index([inviterId], map: "idx_invite_relation_inviter_id")
+  @@map("invite_relation")
+}
+
+model InviteRewardRule {
+  id                  Int                  @id @default(autoincrement())
+  inviteCount         Int                  @unique @map("invite_count")
+  rewardType          String               @map("reward_type") @db.VarChar(20)
+  rewardValue         Int                  @map("reward_value")
+  rewardName          String               @map("reward_name")
+  rewardDescription   String?              @map("reward_description")
+  isActive            Boolean?             @default(true) @map("is_active")
+  createdAt           String?              @map("created_at")
+  updatedAt           String?              @map("updated_at")
+  inviteRewardRecords InviteRewardRecord[]
+
+  @@index([isActive], map: "idx_invite_reward_rule_active")
+  @@index([inviteCount], map: "idx_invite_reward_rule_count")
+  @@map("invite_reward_rule")
+}
+
+model InviteRewardRecord {
+  id          Int              @id @default(autoincrement())
+  userId      String           @map("user_id") @db.Uuid
+  ruleId      Int              @map("rule_id")
+  inviteCount Int              @map("invite_count")
+  rewardType  String           @map("reward_type") @db.VarChar(20)
+  rewardValue Int              @map("reward_value")
+  rewardName  String           @map("reward_name")
+  status      String?          @default("pending") @db.VarChar(20)
+  grantedAt   String?          @map("granted_at")
+  expiresAt   String?          @map("expires_at")
+  createdAt   String?          @map("created_at")
+  rewardRule  InviteRewardRule @relation(fields: [ruleId], references: [id], onUpdate: NoAction, map: "fk_reward_record_rule")
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reward_record_user")
+
+  @@index([createdAt], map: "idx_invite_reward_record_created_at")
+  @@index([ruleId], map: "idx_invite_reward_record_rule_id")
+  @@index([status], map: "idx_invite_reward_record_status")
+  @@index([userId], map: "idx_invite_reward_record_user_id")
+  @@map("invite_reward_record")
+}
+
+model RechargeOrder {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// 所属用户
+  userId         String              @map("user_id") @db.Uuid
+  /// 业务订单号（系统内部唯一）
+  bizOrderNo     String              @unique @map("biz_order_no") @db.VarChar(255)
+  /// 网关订单号（支付网关返回）
+  gatewayOrderNo String?             @map("gateway_order_no") @db.VarChar(255)
+  /// 充值金额（元）
+  amount         Decimal             @db.Decimal(12, 4)
+  /// 支付渠道（WECHAT/ALIPAY）
+  payProvider    String              @map("pay_provider") @db.VarChar(20)
+  /// 订单状态
+  status         RechargeOrderStatus @default(pending)
+  /// 支付二维码URL（NATIVE方式）
+  qrcodeUrl      String?             @map("qrcode_url")
+  /// 是否已处理（幂等控制）
+  processed      Boolean             @default(false)
+  /// 创建时间
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamp(6)
+  /// 更新时间
+  updatedAt      DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  /// 支付完成时间
+  paidAt         DateTime?           @map("paid_at") @db.Timestamp(6)
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_recharge_order_user")
+
+  @@index([bizOrderNo], map: "idx_recharge_orders_biz_order_no")
+  @@index([gatewayOrderNo], map: "idx_recharge_orders_gateway_order_no")
+  @@index([userId, createdAt], map: "idx_recharge_orders_user_created")
+  @@map("recharge_orders")
+}
 
 /// API Key 状态
 enum ApiKeyStatus {
@@ -35,10 +356,10 @@ enum UsageStatus {
 
 /// 财务流水类型
 enum TransactionType {
-  recharge   // 用户充值
-  usage      // 调用扣费
-  refund     // 退款
-  adjustment // 人工调整
+  recharge
+  usage
+  refund
+  adjustment
 }
 
 /// 订阅状态
@@ -55,474 +376,4 @@ enum RechargeOrderStatus {
   paid
   failed
   canceled
-}
-
-// ============================================================
-// 用户表
-// 功能：系统账户 & 企业客户主体
-// ============================================================
-model User {
-  /// 用户唯一ID（UUID）
-  id        String   @id @default(uuid()) @db.Uuid
-
-  /// 登录邮箱
-  email     String   @unique
-
-  /// 密码哈希（bcrypt/argon2）
-  password  String?
-
-  /// 用户角色：admin / user / enterprise
-  role      String   @default("user")
-
-  /// 创建时间
-  createdAt DateTime @default(now()) @map("created_at")
-
-  /// 更新时间
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  // ========== 关联关系 ==========
-  apiKeys        ApiKey[]
-  usageLogs      UsageLog[]
-  transactions   Transaction[]
-  balance        UserBalance?
-  subscriptions  Subscription[]
-  loginLogs      UserLoginLog[]
-  behaviorLogs  UserBehaviorLog[]
-  // 邀请系统关系
-  inviteCodes              InviteCode[]
-  inviteRelationsAsInvitee InviteRelation[]     @relation("invite_relation_invitee_idTousers")
-  inviteRelationsAsInviter InviteRelation[]     @relation("invite_relation_inviter_idTousers")
-  inviteRewardRecords      InviteRewardRecord[]
-  // 充值订单关系
-  rechargeOrders           RechargeOrder[]
-
-  @@map("users")
-}
-
-// ============================================================
-// API Key 表
-// 功能：认证用户 API 请求（OpenAI 风格）
-// ============================================================
-model ApiKey {
-  id              String   @id @default(uuid()) @db.Uuid
-
-  /// 所属用户
-  userId          String   @db.Uuid @map("user_id")
-
-  /// 密钥哈希（安全设计，不存明文）
-  keyHash         String   @map("key_hash")
-
-  /// 密钥名称（方便管理）
-  name            String?
-
-  /// 状态
-  status          ApiKeyStatus @default(active)
-
-  /// 每分钟请求限制（防滥用）
-  rateLimitPerMin Int      @default(60) @map("rate_limit_per_min")
-
-  /// 创建时间
-  createdAt       DateTime @default(now()) @map("created_at")
-
-  /// 最后使用时间
-  lastUsedAt      DateTime? @map("last_used_at")
-
-  // 关联
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  usageLogs UsageLog[]
-
-  @@index([userId], map: "idx_api_keys_user")
-  @@map("api_keys")
-}
-
-// ============================================================
-// 供应商表
-// 功能：API 供应商基本信息与默认 base URL
-// ============================================================
-model Provider {
-  id        Int      @id @default(autoincrement())
-
-  /// 供应商代码（openai / anthropic / google / together / ollama）
-  code      String   @unique @db.VarChar(32)
-
-  /// 显示名称
-  name      String?  @db.VarChar(128)
-
-  /// 默认 base URL（模型可覆盖）
-  baseUrl   String   @map("base_url") @db.Text
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  modelPricings ModelPricing[]
-
-  @@index([code])
-  @@map("providers")
-}
-
-// ============================================================
-// 模型定价表
-// 功能：定义不同模型价格 & 成本控制
-// ============================================================
-model ModelPricing {
-  /// 自增 id（便于引用，主键仍为 model_name）
-  id          Int      @unique @default(autoincrement())
-
-  /// 模型名称（如 gpt-4o）
-  modelName   String   @id @map("model_name")
-
-  /// 所属供应商（可选，未关联时仍用 provider 字段）
-  providerId  Int?     @map("provider_id")
-
-  /// 输入 token 单价（每 1K tokens）
-  inputPrice  Decimal  @db.Decimal(10,6) @map("input_price")
-
-  /// 输出 token 单价（每 1K tokens）
-  outputPrice Decimal  @db.Decimal(10,6) @map("output_price")
-
-  /// 输入 token 成本价（每 1K tokens）
-  inputCost   Decimal? @db.Decimal(10,6) @map("input_cost")
-
-  /// 输出 token 成本价（每 1K tokens）
-  outputCost  Decimal? @db.Decimal(10,6) @map("output_cost")
-
-  /// 提供商（openai / anthropic / local），保留兼容
-  provider    String
-
-  /// 模型 base URL 覆盖（不填则用供应商默认）
-  baseUrl     String?  @map("base_url") @db.Text
-
-  /// 模型最大 token 数
-  maxTokens   Int?     @map("max_tokens")
-
-  /// 模型简介
-  description String? @db.Text
-
-  /// 是否启用
-  enabled     Boolean  @default(true)
-
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  providerRef Provider?  @relation(fields: [providerId], references: [id], onDelete: SetNull)
-  usageLogs   UsageLog[]
-
-  @@index([providerId])
-  @@map("model_pricing")
-}
-
-// ============================================================
-// 使用记录表（计费核心）
-// 功能：记录每次调用的 token & 成本
-// ============================================================
-model UsageLog {
-  id             BigInt      @id @default(autoincrement()) @db.BigInt
-
-  userId         String      @db.Uuid @map("user_id")
-  apiKeyId       String?     @db.Uuid @map("api_key_id")
-
-  /// 使用的模型
-  model          String
-
-  /// 用户请求的模型（与 model 不同时表示发生了 fallback）
-  requestedModel String?  @map("requested_model")
-
-  /// 实际调用的提供商（openai / anthropic / google）
-  provider       String?
-
-  /// 请求追踪 ID（便于对账与排查）
-  requestId      String?  @map("request_id")
-
-  /// 输入 token 数
-  inputTokens    Int         @map("input_tokens")
-
-  /// 输出 token 数
-  outputTokens   Int         @map("output_tokens")
-
-  /// 总 token 数
-  totalTokens    Int         @map("total_tokens")
-
-  /// 本次调用费用（Decimal 防止财务误差）
-  cost           Decimal     @db.Decimal(10,6)
-
-  /// 延迟（毫秒）
-  latencyMs      Int?        @map("latency_ms")
-
-  /// 状态（成功/失败/限流）
-  status         UsageStatus
-
-  createdAt      DateTime    @default(now()) @map("created_at")
-
-  // 关联
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  apiKey  ApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
-  pricing ModelPricing? @relation(fields: [model], references: [modelName])
-
-  @@index([userId, createdAt], map: "idx_usage_user_time")
-  @@index([model], map: "idx_usage_model")
-  @@map("usage_logs")
-}
-
-// ============================================================
-// 用户余额表（预付费模式）
-// ============================================================
-model UserBalance {
-  userId    String   @id @db.Uuid @map("user_id")
-
-  /// 当前余额
-  balance   Decimal  @default(0) @db.Decimal(12,4)
-
-  updatedAt DateTime @default(now()) @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("user_balances")
-}
-
-// ============================================================
-// 财务流水表（审计 & 对账核心）
-// ============================================================
-model Transaction {
-  id          BigInt   @id @default(autoincrement()) @db.BigInt
-  userId      String   @db.Uuid @map("user_id")
-
-  /// 金额（正=充值，负=扣费）
-  amount      Decimal  @db.Decimal(12,4)
-
-  /// 类型：充值/使用/退款/调整
-  type        TransactionType
-
-  description String?
-
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, createdAt], map: "idx_tx_user_time")
-  @@map("transactions")
-}
-
-// ============================================================
-// 套餐定义表（SaaS 订阅）
-// ============================================================
-model Plan {
-  id           Int      @id @default(autoincrement())
-
-  /// 套餐名称
-  name         String
-
-  /// 月费
-  monthlyPrice Decimal  @db.Decimal(10,2) @map("monthly_price")
-
-  /// token额度
-  tokenQuota   BigInt   @map("token_quota")
-
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  subscriptions Subscription[]
-
-  @@map("plans")
-}
-
-// ============================================================
-// 用户订阅表（企业 & SaaS）
-// ============================================================
-model Subscription {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String   @db.Uuid @map("user_id")
-  planId           Int      @map("plan_id")
-
-  /// 当前周期结束时间
-  currentPeriodEnd DateTime @map("current_period_end")
-
-  status           SubscriptionStatus
-
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  user User @relation(fields: [userId], references: [id])
-  plan Plan @relation(fields: [planId], references: [id])
-
-  @@index([userId, status])
-  @@map("subscriptions")
-}
-
-// ============================================================
-// 用户登录日志表
-// 功能：记录用户登录信息（IP、User-Agent、时间）
-// ============================================================
-model UserLoginLog {
-  id        BigInt   @id @default(autoincrement()) @db.BigInt
-  userId    String   @db.Uuid @map("user_id")
-  email     String   @db.VarChar(255)
-  loginAt   DateTime @map("login_at")
-  ipAddress String?  @map("ip_address") @db.Text
-  userAgent String?  @map("user_agent") @db.Text
-
-  // 关联
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("user_login_logs")
-  @@index([userId])
-  @@index([email])
-  @@index([loginAt])
-}
-
-// ============================================================
-// 用户行为日志表
-// 功能：记录用户功能使用时长等行为数据
-// ============================================================
-model UserBehaviorLog {
-  id              BigInt    @id @default(autoincrement()) @db.BigInt
-  userId          String    @db.Uuid @map("user_id")
-  email           String    @db.VarChar(255)
-  functionName    String    @map("function_name") @db.Text
-  startTime       DateTime  @map("start_time")
-  endTime         DateTime? @map("end_time")
-  durationSeconds Float?    @map("duration_seconds")
-  createdAt       DateTime  @default(now()) @map("created_at")
-
-  // 关联
-  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("user_behavior_logs")
-  @@index([userId])
-  @@index([email])
-  @@index([functionName])
-  @@index([startTime])
-}
-
-// ============================================================
-// 邀请系统相关表
-// ============================================================
-
-// 邀请码表
-model InviteCode {
-  id        Int      @id @default(autoincrement())
-  code      String   @unique @db.VarChar(32)
-  userId    String   @map("user_id") @db.Uuid
-  maxUses   Int      @default(1) @map("max_uses")
-  usedCount Int      @default(0) @map("used_count")
-  expiresAt String?  @map("expires_at")
-  createdAt String?  @map("created_at")
-
-  // 关系
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("invite_code")
-  @@index([code])
-  @@index([userId])
-}
-
-// 邀请关系表
-model InviteRelation {
-  id         Int       @id @default(autoincrement())
-  inviterId  String    @map("inviter_id") @db.Uuid
-  inviteeId  String    @map("invitee_id") @db.Uuid
-  inviteCode String    @map("invite_code") @db.VarChar(32)
-  usedAt     String?   @map("used_at")
-  /// 被邀请人首充奖励已发放时间（仅发放一次，直接加邀请人余额）
-  rechargeRewardGrantedAt DateTime? @map("recharge_reward_granted_at")
-
-  // 关系
-  inviter    User     @relation("invite_relation_inviter_idTousers", fields: [inviterId], references: [id], onDelete: Cascade)
-  invitee    User     @relation("invite_relation_invitee_idTousers", fields: [inviteeId], references: [id], onDelete: Cascade)
-
-  @@map("invite_relation")
-  @@index([inviterId])
-  @@index([inviteeId])
-  @@index([inviteCode])
-}
-
-// 邀请奖励规则表
-model InviteRewardRule {
-  id                  Int                  @id @default(autoincrement())
-  inviteCount         Int                  @unique @map("invite_count")
-  rewardType          String               @map("reward_type") @db.VarChar(20)
-  rewardValue         Int                  @map("reward_value")
-  rewardName          String               @map("reward_name")
-  rewardDescription   String?              @map("reward_description")
-  isActive            Boolean              @default(true) @map("is_active")
-  createdAt           String?              @map("created_at")
-  updatedAt           String?              @map("updated_at")
-
-  // 关系
-  inviteRewardRecords InviteRewardRecord[]
-
-  @@map("invite_reward_rule")
-  @@index([inviteCount])
-  @@index([isActive])
-}
-
-// 用户邀请奖励记录表
-model InviteRewardRecord {
-  id          Int              @id @default(autoincrement())
-  userId      String           @map("user_id") @db.Uuid
-  ruleId      Int              @map("rule_id")
-  inviteCount Int              @map("invite_count")
-  rewardType  String           @map("reward_type") @db.VarChar(20)
-  rewardValue Int              @map("reward_value")
-  rewardName  String           @map("reward_name")
-  status      String           @default("pending") @db.VarChar(20)
-  grantedAt   String?          @map("granted_at")
-  expiresAt   String?          @map("expires_at")
-  createdAt   String?          @map("created_at")
-
-  // 关系
-  rewardRule  InviteRewardRule @relation(fields: [ruleId], references: [id])
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("invite_reward_record")
-  @@index([userId])
-  @@index([ruleId])
-  @@index([status])
-  @@index([createdAt])
-}
-
-// ============================================================
-// 充值订单表
-// 功能：记录用户充值订单信息
-// ============================================================
-model RechargeOrder {
-  id              String   @id @default(uuid()) @db.Uuid
-
-  /// 所属用户
-  userId          String   @db.Uuid @map("user_id")
-
-  /// 业务订单号（系统内部唯一）
-  bizOrderNo     String   @unique @map("biz_order_no")
-
-  /// 网关订单号（支付网关返回）
-  gatewayOrderNo String?  @map("gateway_order_no")
-
-  /// 充值金额（元）
-  amount         Decimal  @db.Decimal(12,4)
-
-  /// 支付渠道（WECHAT/ALIPAY）
-  payProvider    String   @map("pay_provider")
-
-  /// 订单状态
-  status         RechargeOrderStatus @default(pending)
-
-  /// 支付二维码URL（NATIVE方式）
-  qrcodeUrl      String?  @map("qrcode_url")
-
-  /// 是否已处理（幂等控制）
-  processed      Boolean  @default(false)
-
-  /// 创建时间
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  /// 更新时间
-  updatedAt      DateTime @updatedAt @map("updated_at")
-
-  /// 支付完成时间
-  paidAt         DateTime? @map("paid_at")
-
-  // 关联
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, createdAt])
-  @@index([bizOrderNo])
-  @@index([gatewayOrderNo])
-  @@map("recharge_orders")
 }
