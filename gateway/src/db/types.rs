@@ -63,6 +63,8 @@ pub struct BillArgs {
     pub total_tokens:  i32,
     /// 本次调用费用（按 actual model 单价计算）
     pub cost:          BigDecimal,
+    /// 节省的费用（相对于基准模型的差额）
+    pub saved_cost:    BigDecimal,
     /// 端到端延迟，写入 usage_logs.latency_ms
     pub latency_ms:    i32,
 }

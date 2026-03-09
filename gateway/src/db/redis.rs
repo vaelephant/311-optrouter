@@ -21,11 +21,38 @@
 //! 原因：缓存层故障不应中断核心业务逻辑，只是性能降级（多查一次 DB）。
 
 use redis::{aio::ConnectionManager, AsyncCommands};
+use uuid::Uuid;
 
 use super::types::ApiKeyMeta;
+use crate::router::SessionSummary;
 
 fn cache_key(key_hash: &str) -> String {
     format!("ak:{key_hash}")
+}
+
+fn session_key(session_id: Uuid) -> String {
+    format!("sess:{session_id}")
+}
+
+/// 获取会话摘要
+pub async fn get_session_summary(
+    redis: &mut ConnectionManager,
+    session_id: Uuid,
+) -> Option<SessionSummary> {
+    let skey = session_key(session_id);
+    let raw: Option<String> = redis.get(&skey).await.ok().flatten();
+    serde_json::from_str(&raw?).ok()
+}
+
+/// 保存会话摘要 (TTL 1小时)
+pub async fn set_session_summary(
+    redis: &mut ConnectionManager,
+    summary: &SessionSummary,
+) {
+    let skey = session_key(summary.session_id);
+    if let Ok(json) = serde_json::to_string(summary) {
+        let _: redis::RedisResult<()> = redis.set_ex(&skey, json, 3600).await;
+    }
 }
 
 /// 从 Redis 读取 Key 元数据。

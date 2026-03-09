@@ -9,11 +9,27 @@
 model = "gpt-4o"
 provider = "openai"
 provider_url = "https://api.openai.com/v1"
+tier = "premium"
+input_price_per_1m = 2.5
+output_price_per_1m = 10.0
+[models.capability]
+supports_json = true
+supports_tools = true
+supports_vision = true
+max_context = 128000
 
 [[models]]
 model = "gpt-4o-mini"
 provider = "openai"
 provider_url = "https://api.openai.com/v1"
+tier = "eco"
+input_price_per_1m = 0.15
+output_price_per_1m = 0.6
+[models.capability]
+supports_json = true
+supports_tools = true
+supports_vision = true
+max_context = 128000
 
 [[models]]
 model = "gpt-4-turbo"

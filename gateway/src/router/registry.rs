@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::model_router::{ProviderType, RouteInfo};
+use super::types::{ModelTier, ModelCapability};
 
 /// 配置文件根结构
 #[derive(serde::Deserialize)]
@@ -23,11 +24,23 @@ struct ModelsConfig {
     models: Vec<ModelEntry>,
 }
 
+fn default_tier() -> ModelTier {
+    ModelTier::Balanced
+}
+
 #[derive(serde::Deserialize)]
 struct ModelEntry {
     model:         String,
     provider:      String,
     provider_url:  String,
+    #[serde(default = "default_tier")]
+    tier:                  ModelTier,
+    #[serde(default)]
+    capability:            ModelCapability,
+    #[serde(default)]
+    input_price_per_1m:    f64,
+    #[serde(default)]
+    output_price_per_1m:   f64,
     #[serde(default)]
     fallback_model:        Option<String>,
     #[serde(default)]
@@ -85,6 +98,10 @@ pub fn load_registry_from_path(path: &str) -> Result<HashMap<String, RouteInfo>,
             model:                entry.model.clone(),
             provider_url:        entry.provider_url,
             provider,
+            tier:                 entry.tier,
+            capability:           entry.capability,
+            input_price_per_1m:   entry.input_price_per_1m,
+            output_price_per_1m:  entry.output_price_per_1m,
             fallback_model,
             fallback_provider_url,
             fallback_provider,

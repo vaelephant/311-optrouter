@@ -21,7 +21,7 @@ pub mod types;
 pub use pg::{bill_in_tx, get_model_pricing, get_model_pricing_with_provider, get_user_balance, list_enabled_models, validate_key_from_db};
 
 // ── Redis 缓存 re-export ─────────────────────────────────────────────────────
-pub use redis::{cache_get_key_meta, cache_set_key_meta};
+pub use redis::{cache_get_key_meta, cache_set_key_meta, get_session_summary, set_session_summary};
 // Next.js 吊销 Key 时调用，当前未被内部代码引用，但作为公开接口保留
 #[allow(unused_imports)]
 pub use redis::cache_del_key_meta;

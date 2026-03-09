@@ -14,9 +14,13 @@
 
 pub mod model_router;
 pub mod registry;
+pub mod strategy;
+pub mod types;
 
-pub use model_router::{ModelRouter, ProviderType, RouteInfo};
+pub use model_router::{ModelRouter, ProviderType, RouteInfo, IntelligentRouteResult};
 pub use registry::load_registry;
+pub use strategy::{CoarseRouter, ContextualRouter, HeuristicScorer};
+pub use types::*;
 
 use std::sync::Arc;
 

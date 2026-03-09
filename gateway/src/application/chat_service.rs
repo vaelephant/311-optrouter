@@ -17,13 +17,13 @@ use tracing::{error, info, warn};
 
 use crate::{
     application::auth_service::authenticate,
-    db::{self, BillArgs, ModelPricingInfo},
+    db::{self, BillArgs, ModelPricingInfo, get_session_summary, set_session_summary},
     error::{AppError, AppResult},
-    metrics::compute_cost,
-    protocol::{ChatCompletionRequest, ChatCompletionResponse},
+    metrics::{compute_cost, token_counter::compute_savings},
+    protocol::{ChatCompletionRequest, ChatCompletionResponse, ChatMessage, MessageRole},
     providers::build_provider,
     proxy::{AccountingStream, StreamUsage},
-    router::{ProviderType, RouteInfo, RouterState},
+    router::{ProviderType, RouteInfo, RouterState, RequestProfile, IntelligentRouteResult, RoutingDecision, ModelTier},
 };
 
 /// chat completions 完整业务流程入口。
@@ -35,13 +35,22 @@ pub async fn handle_chat(
 ) -> AppResult<Response> {
     let start = Instant::now();
 
-    // [临时调试] 打印 Authorization 前10位 和 model
-    let auth_prefix = headers
-        .get("authorization")
+    // 1. 提取路由开关信号
+    let session_id = headers.get("x-session-id")
         .and_then(|v| v.to_str().ok())
-        .map(|s| &s[..s.len().min(10)])
-        .unwrap_or("(none)");
-    tracing::info!("[DEBUG] auth_prefix={:?} model={} stream={}", auth_prefix, request.model, request.stream);
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    
+    // 智能分层开关：携带特定 Header 或 请求的是虚拟模型
+    let is_virtual_model = matches!(request.model.as_str(), "auto" | "eco" | "balanced" | "premium" | "code" | "reasoning");
+    let has_intelligent_header = headers.get("x-opt-strategy")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_lowercase() == "intelligent")
+        .unwrap_or(false);
+    
+    let routing_enabled = is_virtual_model || has_intelligent_header;
+
+    // [临时调试] 打印开关状态
+    tracing::info!("[DEBUG] model={} routing_enabled={} session={:?}", request.model, routing_enabled, session_id);
 
     // 过滤 tool/function 消息，避免 OpenAI 报 400
     request = request.strip_tool_messages();
@@ -61,14 +70,84 @@ pub async fn handle_chat(
         return Err(AppError::BadRequest("messages cannot be empty".into()));
     }
 
-    let pricing = db::get_model_pricing(&state.db, &request.model)
+    // 2. 路由决策逻辑
+    let (route, decision) = if routing_enabled {
+        // --- 开启分层路由 (Layer 1, 2 & 3) ---
+        let mut summary = None;
+        if let Some(sid) = session_id {
+            let mut redis = state.redis.clone();
+            summary = get_session_summary(&mut redis, sid).await;
+        }
+
+        let last_msg_content = request.messages.last().map(|m| m.content.as_str()).unwrap_or("");
+        let profile = RequestProfile::from_request(&request);
+        let route_result = state.model_router.intelligent_route(&profile, summary.as_ref(), last_msg_content, true).await;
+        
+        match route_result {
+            IntelligentRouteResult::Routed(r, d) => {
+                info!(requested = %request.model, routed_to = %r.model, tier = ?d.tier, confidence = d.confidence, "layer 1/2 routing success");
+                (r, Some(d))
+            }
+            IntelligentRouteResult::NeedsRefinement(classifier_model, prompt) => {
+                info!(classifier = %classifier_model, "triggering layer 3 refinement");
+                let classifier_route = state.model_router.route(&classifier_model).await;
+                let refine_req = ChatCompletionRequest {
+                    model: classifier_model.clone(),
+                    messages: vec![ChatMessage {
+                        role: MessageRole::User,
+                        content: prompt,
+                        ..Default::default()
+                    }],
+                    max_tokens: Some(10),
+                    temperature: Some(0.0),
+                    ..Default::default()
+                };
+                let refine_result = tokio::time::timeout(
+                    std::time::Duration::from_secs(2), 
+                    call_with_fallback(&state, &refine_req, &classifier_route, false)
+                ).await;
+
+                match refine_result {
+                    Ok(Ok((resp, _, _))) => {
+                        if let Ok(refine_json) = resp.json::<serde_json::Value>().await {
+                            let provider = build_provider(&classifier_route.provider, "", &classifier_route.provider_url);
+                            let refine_chat_resp: ChatCompletionResponse = provider.convert_response(&classifier_model, &refine_json);
+                            let text = refine_chat_resp.choices.first().map(|c| c.message.content.as_str()).unwrap_or("balanced");
+                            let tier = state.model_router.parse_refined_tier(text);
+                            let final_route = state.model_router.route_by_tier(tier).await.unwrap_or(classifier_route.clone());
+                            
+                            info!(tier = ?tier, routed_to = %final_route.model, "layer 3 refinement result");
+                            (final_route, Some(RoutingDecision {
+                                target_model: String::new(),
+                                tier,
+                                confidence: 1.0,
+                                reason: vec![format!("Layer 3 refined from classifier: {}", text)],
+                                fallback_models: vec![],
+                            }))
+                        } else {
+                            (classifier_route, None)
+                        }
+                    }
+                    _ => {
+                        warn!("layer 3 refinement failed or timed out, falling back to static");
+                        (state.model_router.route(&request.model).await, None)
+                    }
+                }
+            }
+            IntelligentRouteResult::Static(_) => {
+                (state.model_router.route(&request.model).await, None)
+            }
+        }
+    } else {
+        // --- 关闭分层路由: 100% 静态透传 ---
+        (state.model_router.route(&request.model).await, None)
+    };
+
+    let pricing = db::get_model_pricing(&state.db, &route.model)
         .await?
-        .ok_or_else(|| AppError::BadRequest(format!("model '{}' is not available", request.model)))?;
+        .ok_or_else(|| AppError::BadRequest(format!("model '{}' is not available", route.model)))?;
 
-    let route = state.model_router.route(&request.model).await;
-    info!(model = %request.model, provider = ?route.provider, stream = request.stream, "routing");
-
-    // 余额预检：要求 balance >= estimated_cost，避免透支
+    // 余额预检
     let max_tokens = request.max_tokens.unwrap_or(4096) as i32;
     let k = bigdecimal::BigDecimal::from(1000i32);
     let estimated_output = bigdecimal::BigDecimal::from(max_tokens) / &k * &pricing.output_price;
@@ -80,9 +159,9 @@ pub async fn handle_chat(
     }
 
     if request.stream {
-        handle_stream(state, request, route, meta, pricing, start).await
+        handle_stream(state, request, route, meta, pricing, start, session_id, decision).await
     } else {
-        handle_non_stream(state, request, route, meta, pricing, start).await
+        handle_non_stream(state, request, route, meta, pricing, start, session_id, decision).await
     }
 }
 
@@ -91,6 +170,8 @@ pub async fn handle_chat(
 pub(crate) async fn handle_non_stream(
     state: RouterState, request: ChatCompletionRequest, route: RouteInfo,
     meta: crate::db::ApiKeyMeta, _pricing: ModelPricingInfo, start: Instant,
+    session_id: Option<uuid::Uuid>,
+    decision: Option<RoutingDecision>,
 ) -> AppResult<Response> {
     let (resp, actual_model, actual_provider) = call_with_fallback(&state, &request, &route, false).await?;
     if !resp.status().is_success() {
@@ -106,7 +187,7 @@ pub(crate) async fn handle_non_stream(
     let mut latency_ms_header = String::new();
     let mut cost_yuan_header  = String::new();
 
-    if let Some(ref usage) = chat_resp.usage {
+    if let Some(usage) = chat_resp.usage.clone() {
         let pricing_actual = db::get_model_pricing(&state.db, &actual_model).await.ok().flatten()
             .unwrap_or(_pricing);
         let cost    = compute_cost(usage.prompt_tokens as i32, usage.completion_tokens as i32, &pricing_actual);
@@ -116,53 +197,52 @@ pub(crate) async fn handle_non_stream(
         cost_yuan_header  = cost.to_string();
 
         let db_clone  = state.db.clone();
-        let bill_args = BillArgs {
-            user_id:         meta.user_id,
-            api_key_id:      meta.api_key_id,
-            model:           actual_model.clone(),
-            requested_model: if actual_model != request.model { Some(request.model.clone()) } else { None },
-            provider:        Some(actual_provider.as_str().to_string()),
-            request_id:      None,
-            input_tokens:    usage.prompt_tokens as i32,
-            output_tokens:   usage.completion_tokens as i32,
-            total_tokens:    usage.total_tokens as i32,
-            cost,
-            latency_ms:      latency as i32,
-        };
+        let redis_clone = state.redis.clone();
+        
+        let messages = request.messages.clone();
+        let tier = decision.as_ref().map(|d| d.tier).unwrap_or(route.tier);
+        let requested_model = request.model.clone();
+        let routing_was_active = decision.is_some();
+
         tokio::spawn(async move {
+            // 只有在路由激活且实际模型与请求模型不同时，才计算节省金额
+            let saved_cost = if routing_was_active {
+                let baseline_model = match tier {
+                    ModelTier::Premium | ModelTier::Reasoning | ModelTier::LongCtx => "gpt-4o",
+                    _ => "gpt-4o-mini",
+                };
+                let baseline_pricing = db::get_model_pricing(&db_clone, baseline_model).await.ok().flatten()
+                    .unwrap_or(pricing_actual.clone());
+                compute_savings(usage.prompt_tokens as i32, usage.completion_tokens as i32, &cost, tier, &baseline_pricing)
+            } else {
+                bigdecimal::BigDecimal::from(0)
+            };
+
+            let bill_args = BillArgs {
+                user_id:         meta.user_id,
+                api_key_id:      meta.api_key_id,
+                model:           actual_model.clone(),
+                requested_model: if actual_model != requested_model { Some(requested_model) } else { None },
+                provider:        Some(actual_provider.as_str().to_string()),
+                request_id:      None,
+                input_tokens:    usage.prompt_tokens as i32,
+                output_tokens:   usage.completion_tokens as i32,
+                total_tokens:    usage.total_tokens as i32,
+                cost,
+                saved_cost,
+                latency_ms:      latency as i32,
+            };
+
             if let Err(e) = db::bill_in_tx(&db_clone, bill_args).await {
                 error!(err = %e, "non-stream billing failed");
+            }
+            if let Some(sid) = session_id {
+                spawn_smart_summary_update(state, sid, messages, redis_clone).await;
             }
         });
     }
 
-    // [临时调试] 打印返回给调用方的完整信息
     let body = serde_json::to_string(&chat_resp)?;
-    {
-        let content_preview = chat_resp.choices.first()
-            .map(|c| {
-                let t = c.message.content.chars().take(40).collect::<String>();
-                format!("string({} chars): {:?}", c.message.content.len(), t)
-            })
-            .unwrap_or_else(|| "choices is empty!".into());
-        let finish_reason = chat_resp.choices.first()
-            .map(|c| c.finish_reason.as_str())
-            .unwrap_or("N/A");
-        let has_error = body.contains("\"error\"");
-        info!(
-            "[DEBUG RESP] status=200 \
-             Content-Type=application/json \
-             X-Model-Latency-Ms={} \
-             X-Cost-Yuan={} \
-             body_len={} \
-             content={} \
-             finish_reason={} \
-             has_error_field={}",
-            latency_ms_header, cost_yuan_header,
-            body.len(), content_preview, finish_reason, has_error
-        );
-    }
-
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
@@ -177,6 +257,8 @@ pub(crate) async fn handle_non_stream(
 pub(crate) async fn handle_stream(
     state: RouterState, request: ChatCompletionRequest, route: RouteInfo,
     meta: crate::db::ApiKeyMeta, _pricing: ModelPricingInfo, start: Instant,
+    session_id: Option<uuid::Uuid>,
+    decision: Option<RoutingDecision>,
 ) -> AppResult<Response> {
     let (upstream, actual_model, actual_provider) = call_with_fallback(&state, &request, &route, true).await?;
     if !upstream.status().is_success() {
@@ -193,17 +275,34 @@ pub(crate) async fn handle_stream(
     let body_stream = Body::from_stream(AccountingStream::new(Box::pin(raw_stream), usage_tx));
 
     let db_clone   = state.db.clone();
+    let redis_clone = state.redis.clone();
     let model_name = actual_model.clone();
     let requested  = request.model.clone();
     let prov_str   = actual_provider.as_str().to_string();
     let user_id    = meta.user_id;
     let key_id     = meta.api_key_id;
     let pricing_for_bill = pricing_actual;
+    let messages = request.messages.clone();
+    let tier = decision.as_ref().map(|d| d.tier).unwrap_or(route.tier);
+    let routing_was_active = decision.is_some();
 
     tokio::spawn(async move {
         match usage_rx.await {
             Ok(Some(usage)) => {
-                let cost = compute_cost(usage.prompt_tokens, usage.completion_tokens, &pricing_for_bill);
+                let actual_cost = compute_cost(usage.prompt_tokens, usage.completion_tokens, &pricing_for_bill);
+                
+                let saved_cost = if routing_was_active {
+                    let baseline_model = match tier {
+                        ModelTier::Premium | ModelTier::Reasoning | ModelTier::LongCtx => "gpt-4o",
+                        _ => "gpt-4o-mini",
+                    };
+                    let baseline_pricing = db::get_model_pricing(&db_clone, baseline_model).await.ok().flatten()
+                        .unwrap_or(pricing_for_bill.clone());
+                    compute_savings(usage.prompt_tokens, usage.completion_tokens, &actual_cost, tier, &baseline_pricing)
+                } else {
+                    bigdecimal::BigDecimal::from(0)
+                };
+
                 if let Err(e) = db::bill_in_tx(&db_clone, BillArgs {
                     user_id,
                     api_key_id: key_id,
@@ -214,10 +313,15 @@ pub(crate) async fn handle_stream(
                     input_tokens:  usage.prompt_tokens,
                     output_tokens: usage.completion_tokens,
                     total_tokens:  usage.prompt_tokens + usage.completion_tokens,
-                    cost,
+                    cost: actual_cost,
+                    saved_cost,
                     latency_ms: start.elapsed().as_millis() as i32,
                 }).await {
                     error!(model = %model_name, err = %e, "stream billing failed");
+                }
+                
+                if let Some(sid) = session_id {
+                    spawn_smart_summary_update(state, sid, messages, redis_clone).await;
                 }
             }
             Ok(None) => warn!(model = %model_name, "stream ended without usage data"),
@@ -234,10 +338,54 @@ pub(crate) async fn handle_stream(
         .unwrap())
 }
 
+// ─── 智能摘要更新辅助函数 ─────────────────────────────────────────────────────
+
+async fn spawn_smart_summary_update(
+    state: RouterState,
+    session_id: uuid::Uuid,
+    messages: Vec<ChatMessage>,
+    mut redis: redis::aio::ConnectionManager,
+) {
+    let summary_model = state.model_router.summary_model.clone();
+    let summary_route = state.model_router.route(&summary_model).await;
+    let msgs_json = serde_json::to_string(&messages).unwrap_or_default();
+    let summary_prompt = state.model_router.build_summary_prompt(&msgs_json);
+    
+    let summary_req = ChatCompletionRequest {
+        model: summary_model.clone(),
+        messages: vec![ChatMessage {
+            role: MessageRole::User,
+            content: summary_prompt,
+            ..Default::default()
+        }],
+        max_tokens: Some(200),
+        temperature: Some(0.3),
+        ..Default::default()
+    };
+
+    let update_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        call_with_fallback(&state, &summary_req, &summary_route, false)
+    ).await;
+
+    match update_result {
+        Ok(Ok((resp, _, _))) => {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let provider = build_provider(&summary_route.provider, "", &summary_route.provider_url);
+                let summary_resp: ChatCompletionResponse = provider.convert_response(&summary_model, &json);
+                let text = summary_resp.choices.first().map(|c| c.message.content.as_str()).unwrap_or("");
+                if let Some(new_summary) = state.model_router.parse_summary_response(text, session_id) {
+                    set_session_summary(&mut redis, &new_summary).await;
+                    info!(session = %session_id, topic = %new_summary.topic, "smart summary updated");
+                }
+            }
+        }
+        _ => warn!(session = %session_id, "smart summary update failed or timed out"),
+    }
+}
+
 // ─── Provider 调用（含 Fallback）────────────────────────────────────────────
 
-/// 调用 Provider，失败时自动切换到 fallback。
-/// 返回 (响应, 实际调用的模型名, 实际调用的 Provider)。
 pub(crate) async fn call_with_fallback(
     state: &RouterState,
     request: &ChatCompletionRequest,

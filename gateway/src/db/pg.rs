@@ -245,12 +245,12 @@ pub async fn bill_in_tx(pool: &PgPool, args: BillArgs) -> AppResult<()> {
         }
     };
 
-    // ── 2. 写 usage_logs（含 requested_model, provider, request_id）─────────
+    // ── 2. 写 usage_logs（含 requested_model, provider, request_id, saved_cost）
     sqlx::query(
         "INSERT INTO usage_logs \
             (user_id, api_key_id, model, requested_model, provider, request_id, \
-             input_tokens, output_tokens, total_tokens, cost, latency_ms, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'success'::\"UsageStatus\")",
+             input_tokens, output_tokens, total_tokens, cost, saved_cost, latency_ms, status) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'success'::\"UsageStatus\")",
     )
     .bind(args.user_id)
     .bind(args.api_key_id)
@@ -262,6 +262,7 @@ pub async fn bill_in_tx(pool: &PgPool, args: BillArgs) -> AppResult<()> {
     .bind(args.output_tokens)
     .bind(args.total_tokens)
     .bind(&args.cost)
+    .bind(&args.saved_cost)
     .bind(args.latency_ms)
     .execute(&mut *tx)
     .await
